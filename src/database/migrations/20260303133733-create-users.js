@@ -10,6 +10,10 @@ module.exports = {
         autoIncrement: true,
         primaryKey: true,
       },
+      name: {
+        type: Sequelize.STRING(50),
+        allowNull: false,
+      },
       email: {
         type: Sequelize.STRING(255),
         allowNull: false,
@@ -19,7 +23,7 @@ module.exports = {
         allowNull: false,
       },
       default_currency: {
-        type: Sequelize.CHAR(3),
+        type: Sequelize.ENUM("INR", "USD"),
         allowNull: false,
         defaultValue: "INR",
       },
