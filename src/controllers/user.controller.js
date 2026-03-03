@@ -1,153 +1,103 @@
 import * as Yup from "yup";
-import Address from "../models/Address";
-import User from "../models/User";
-import {
-  BadRequestError,
-  UnauthorizedError,
-  ValidationError,
-} from "../utils/ApiError";
+import bcrypt from "bcryptjs";
+import User from "../models/user";
+import { BadRequestError, NotFoundError, ValidationError } from "../utils/ApiError";
 
-//Yup is a JavaScript schema builder for value parsing and validation.
+// Yup is a JavaScript schema builder for value parsing and validation.
 
 let userController = {
-  add: async (req, res, next) => {
+  register: async (req, res, next) => {
     try {
       const schema = Yup.object().shape({
-        name: Yup.string().required(),
-        email: Yup.string().email().required(),
-        password: Yup.string().required().min(6),
-      });
-
-      if (!(await schema.isValid(req.body))) throw new ValidationError();
-
-      const { email } = req.body;
-
-      const userExists = await User.findOne({
-        where: { email },
-      });
-
-      if (userExists) throw new BadRequestError();
-
-      const user = await User.create(req.body);
-
-      return res.status(200).json(user);
-    } catch (error) {
-      next(error);
-    }
-  },
-
-  addAddress: async (req, res, next) => {
-    try {
-      const { body, userId } = req;
-
-      const schema = Yup.object().shape({
-        city: Yup.string().required(),
-        state: Yup.string().required(),
-        neighborhood: Yup.string().required(),
-        country: Yup.string().required(),
-      });
-
-      if (!(await schema.isValid(body.address))) throw new ValidationError();
-
-      const user = await User.findByPk(userId);
-
-      let address = await Address.findOne({
-        where: { ...body.address },
-      });
-
-      if (!address) {
-        address = await Address.create(body.address);
-      }
-
-      await user.addAddress(address);
-
-      return res.status(200).json(user);
-    } catch (error) {
-      next(error);
-    }
-  },
-
-  get: async (req, res, next) => {
-    try {
-      const users = await User.findAll();
-
-      return res.status(200).json(users);
-    } catch (error) {
-      next(error);
-    }
-  },
-
-  find: async (req, res, next) => {
-    try {
-      const { id } = req.params;
-      const user = await User.findByPk(id);
-
-      if (!user) throw new BadRequestError();
-
-      return res.status(200).json(user);
-    } catch (error) {
-      next(error);
-    }
-  },
-
-  update: async (req, res, next) => {
-    try {
-      const schema = Yup.object().shape({
-        name: Yup.string(),
-        email: Yup.string().email(),
-        oldPassword: Yup.string().min(6),
+        name: Yup.string().trim().required("Name is required"),
+        email: Yup.string()
+          .trim()
+          .email("Invalid email format")
+          .required("Email is required"),
         password: Yup.string()
-          .min(6)
-          .when("oldPassword", (oldPassword, field) => {
-            if (oldPassword) {
-              return field.required();
-            } else {
-              return field;
-            }
-          }),
-        confirmPassword: Yup.string().when("password", (password, field) => {
-          if (password) {
-            return field.required().oneOf([Yup.ref("password")]);
-          } else {
-            return field;
-          }
-        }),
+          .min(8, "Password must be at least 8 characters")
+          .required("Password is required"),
+        default_currency: Yup.string().oneOf(["INR", "USD"], "Unsupported currency"),
       });
 
       if (!(await schema.isValid(req.body))) throw new ValidationError();
 
-      const { email, oldPassword } = req.body;
+      const { name, email, password, default_currency } = req.body;
 
-      const user = await User.findByPk(req.userId);
+      const userExists = await User.findOne({ where: { email } });
+      if (userExists) throw new BadRequestError("Email already in use");
 
-      if (email) {
-        const userExists = await User.findOne({
-          where: { email },
-        });
+      const password_hash = await bcrypt.hash(password, 10);
 
-        if (userExists) throw new BadRequestError();
-      }
+      const user = await User.create({
+        name,
+        email,
+        password_hash,
+        default_currency: default_currency || "INR",
+      });
 
-      if (oldPassword && !(await user.checkPassword(oldPassword)))
-        throw new UnauthorizedError();
-
-      const newUser = await user.update(req.body);
-
-      return res.status(200).json(newUser);
+      const { password_hash: _, ...userData } = user.toJSON();
+      return res.status(201).json(userData);
     } catch (error) {
       next(error);
     }
   },
 
-  delete: async (req, res, next) => {
+  getProfile: async (req, res, next) => {
     try {
-      const { id } = req.params;
-      const user = await User.findByPk(id);
-      if (!user) throw new BadRequestError();
+      const user = await User.findOne({
+        where: { id: req.userId },
+        attributes: { exclude: ["password_hash"] },
+      });
 
-      user.destroy();
+      if (!user || user.deleted_at) throw new NotFoundError("User not found");
 
-      return res.status(200).json({ msg: "Deleted" });
+      return res.status(200).json(user);
+    } catch (error) {
+      next(error);
+    }
+  },
+
+  updateProfile: async (req, res, next) => {
+    try {
+      const schema = Yup.object().shape({
+        email: Yup.string().trim().email("Invalid email format"),
+        default_currency: Yup.string().oneOf(["INR", "USD"], "Unsupported currency"),
+      });
+
+      if (!(await schema.isValid(req.body))) throw new ValidationError();
+
+      const { email, default_currency } = req.body;
+
+      const user = await User.findOne({ where: { id: req.userId } });
+      if (!user || user.deleted_at) throw new NotFoundError("User not found");
+
+      if (email && email !== user.email) {
+        const emailTaken = await User.findOne({ where: { email } });
+        if (emailTaken) throw new BadRequestError("Email already in use");
+      }
+
+      const updates = {};
+      if (email) updates.email = email;
+      if (default_currency) updates.default_currency = default_currency;
+
+      await user.update(updates);
+
+      const { password_hash: _, ...userData } = user.toJSON();
+      return res.status(200).json(userData);
+    } catch (error) {
+      next(error);
+    }
+  },
+
+  deleteAccount: async (req, res, next) => {
+    try {
+      const user = await User.findOne({ where: { id: req.userId } });
+      if (!user || user.deleted_at) throw new NotFoundError("User not found");
+
+      await user.update({ deleted_at: new Date() });
+
+      return res.status(200).json({ message: "Account deleted" });
     } catch (error) {
       next(error);
     }

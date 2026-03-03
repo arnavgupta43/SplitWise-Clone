@@ -1,5 +1,5 @@
 import * as Yup from "yup";
-import User from "../models/User";
+import User from "../models/user";
 import JwtService from "../services/jwt.service";
 import {
   BadRequestError,
@@ -21,13 +21,14 @@ let loginController = {
 
       const user = await User.findOne({ where: { email } });
 
-      if (!user) throw new BadRequestError();
+      if (!user || user.deleted_at) throw new BadRequestError("Invalid credentials");
 
       if (!(await user.checkPassword(password))) throw new UnauthorizedError();
 
       const token = JwtService.jwtSign(user.id);
 
-      return res.status(200).json({ user, token });
+      const { password_hash: _, ...userData } = user.toJSON();
+      return res.status(200).json({ user: userData, token });
     } catch (error) {
       next(error);
     }
