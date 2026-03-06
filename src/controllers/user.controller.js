@@ -3,7 +3,7 @@ import bcrypt from "bcryptjs";
 import User from "../models/user";
 import { BadRequestError, NotFoundError, ValidationError } from "../utils/ApiError";
 
-// Yup is a JavaScript schema builder for value parsing and validation.
+
 
 let userController = {
   register: async (req, res, next) => {
